@@ -1,0 +1,23 @@
+diff --git a/LibertyRecomp/install/embedded_assets.cpp b/LibertyRecomp/install/embedded_assets.cpp
+index b8e2114..8095544 100644
+--- a/LibertyRecomp/install/embedded_assets.cpp
++++ b/LibertyRecomp/install/embedded_assets.cpp
+@@ -8,6 +8,10 @@
+ 
+ #include <rex/platform.h>
+ 
++#if REX_PLATFORM_IOS
++extern "C" const char* LIBERTY_IOS_GetBundlePath();
++#endif
++
+ #if defined(__ANDROID__)
+ #include <fcntl.h>
+ #include <unistd.h>
+@@ -110,7 +114,6 @@ static std::filesystem::path ResolveEmbeddedGameRoot()
+     return std::filesystem::path("romfs:/game");
+ #elif REX_PLATFORM_IOS
+     // Bundle resources are at <Bundle>/game/
+-    extern "C" const char* LIBERTY_IOS_GetBundlePath();
+     const char* bp = LIBERTY_IOS_GetBundlePath();
+     if (bp)
+         return std::filesystem::path(bp) / "game";

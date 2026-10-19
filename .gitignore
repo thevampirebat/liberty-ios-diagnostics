@@ -1,0 +1,6 @@
+build/
+output/
+logs/
+.DS_Store
+xcuserdata/
+Mac-preflight.txt
