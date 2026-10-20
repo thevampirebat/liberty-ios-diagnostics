@@ -32,7 +32,13 @@ jobs:
             glue/rexglue-sdk-main/thirdparty/tomlplusplus \
             glue/rexglue-sdk-main/thirdparty/cli11
       - name: Apply reviewed iOS runtime fixes
-        run: git -C upstream apply --check ../runtime-core/patches/*.patch && git -C upstream apply ../runtime-core/patches/*.patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          for patch in "$PWD"/runtime-core/patches/*.patch; do
+            git -C upstream apply --check "$patch"
+            git -C upstream apply "$patch"
+          done
       - name: Configure iOS core compile
         shell: bash
         run: |
