@@ -67,5 +67,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: runtime-core-ios-library
-          path: build/runtime-core/**/libliberty_ios_core.a
+          path: build/runtime-core/**/librexcore.a
           if-no-files-found: error
