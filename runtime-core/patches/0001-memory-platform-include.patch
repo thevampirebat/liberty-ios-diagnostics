@@ -1,8 +1,8 @@
 diff --git a/glue/rexglue-sdk-main/src/core/memory_mac.cpp b/glue/rexglue-sdk-main/src/core/memory_mac.cpp
-index 5bebf85..7948869 100644
+index 5bebf85..39c7313 100644
 --- a/glue/rexglue-sdk-main/src/core/memory_mac.cpp
 +++ b/glue/rexglue-sdk-main/src/core/memory_mac.cpp
-@@ -19,6 +19,8 @@
+@@ -19,9 +19,13 @@
  
  #include <fcntl.h>
  
@@ -10,8 +10,13 @@ index 5bebf85..7948869 100644
 +
  #if REX_PLATFORM_MAC
  #include <mach/mach.h>
++#if !REX_PLATFORM_IOS
  #include <mach/mach_vm.h>
-@@ -32,7 +34,6 @@
++#endif
+ #include <mach/vm_region.h>
+ #endif  // REX_PLATFORM_MAC
+ 
+@@ -32,7 +36,6 @@
  #include <rex/logging.h>
  #include <rex/math.h>
  #include <rex/memory/utils.h>
@@ -19,3 +24,44 @@ index 5bebf85..7948869 100644
  #include <rex/string.h>
  
  #if REX_PLATFORM_ANDROID
+@@ -358,24 +361,35 @@ bool Protect(void* base_address, size_t length, PageAccess access, PageAccess* o
+ 
+ bool QueryProtect(void* base_address, size_t& length, PageAccess& access_out) {
+ #if REX_PLATFORM_MAC
+-  mach_vm_address_t address = reinterpret_cast<mach_vm_address_t>(base_address);
+-  mach_vm_size_t region_size = 0;
++#if REX_PLATFORM_IOS
++  using QueryAddress = vm_address_t;
++  using QuerySize = vm_size_t;
++#else
++  using QueryAddress = mach_vm_address_t;
++  using QuerySize = mach_vm_size_t;
++#endif
++  QueryAddress address = reinterpret_cast<QueryAddress>(base_address);
++  QuerySize region_size = 0;
+   vm_region_basic_info_data_64_t info;
+   mach_msg_type_number_t info_count = VM_REGION_BASIC_INFO_COUNT_64;
+   mach_port_t object_name;
+ 
+   kern_return_t kr =
+-      mach_vm_region(mach_task_self(), &address, &region_size, VM_REGION_BASIC_INFO_64,
++#if REX_PLATFORM_IOS
++      vm_region_64(
++#else
++      mach_vm_region(
++#endifmach_task_self(), &address, &region_size, VM_REGION_BASIC_INFO_64,
+                      reinterpret_cast<vm_region_info_t>(&info), &info_count, &object_name);
+   if (kr != KERN_SUCCESS) {
+     return false;
+   }
+-  if (address > reinterpret_cast<mach_vm_address_t>(base_address)) {
++  if (address > reinterpret_cast<QueryAddress>(base_address)) {
+     return false;
+   }
+ 
+   length = static_cast<size_t>((address + region_size) -
+-                               reinterpret_cast<mach_vm_address_t>(base_address));
++                               reinterpret_cast<QueryAddress>(base_address));
+ 
+   if ((info.protection & (VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE)) ==
+       (VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE)) {
