@@ -1,9 +1,9 @@
-name: Build Vulkan graphics test IPA
+name: Build Liberty Test Lab IPA
 on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['graphics-probe/**', '.github/workflows/graphics-probe.yml']
+    paths: ['graphics-probe/**', 'runtime-core/**', '.github/workflows/graphics-probe.yml']
 permissions:
   contents: read
 jobs:
@@ -12,6 +12,27 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: OZORDI/LibertyRecomp
+          ref: 1922957d9f5a09acf0af12b918c43a910b3a13a5
+          path: upstream
+      - name: Prepare pinned runtime core
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C upstream submodule update --init --depth 1 --jobs 4 \
+            glue/rexglue-sdk-main/thirdparty/fmt \
+            glue/rexglue-sdk-main/thirdparty/spdlog \
+            glue/rexglue-sdk-main/thirdparty/xxHash \
+            glue/rexglue-sdk-main/thirdparty/utfcpp \
+            glue/rexglue-sdk-main/thirdparty/simde \
+            glue/rexglue-sdk-main/thirdparty/tomlplusplus \
+            glue/rexglue-sdk-main/thirdparty/cli11
+          for patch in "$PWD"/runtime-core/patches/*.patch; do
+            git -C upstream apply --check "$patch"
+            git -C upstream apply "$patch"
+          done
       - name: Fetch official MoltenVK iOS 1.4.2
         shell: bash
         run: |
@@ -49,19 +70,19 @@ jobs:
           test -f "$app/triangle.vert.spv"
           test -f "$app/triangle.frag.spv"
           ditto "$app" output/Payload/VulkanProbe.app
-          (cd output && zip -qry LibertyVulkanProbe-unsigned.ipa Payload)
-          unzip -t output/LibertyVulkanProbe-unsigned.ipa
+          (cd output && zip -qry LibertyTestLab-unsigned.ipa Payload)
+          unzip -t output/LibertyTestLab-unsigned.ipa
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: LibertyVulkanProbe-unsigned-IPA
-          path: output/LibertyVulkanProbe-unsigned.ipa
+          name: LibertyTestLab-unsigned-IPA
+          path: output/LibertyTestLab-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
       - name: Upload build logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: vulkan-probe-build-logs
+          name: test-lab-build-logs
           path: logs/
           retention-days: 14

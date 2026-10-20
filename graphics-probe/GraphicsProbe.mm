@@ -1,6 +1,14 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
+#import <AVFoundation/AVFoundation.h>
+#include <rex/memory/utils.h>
+#include <rex/thread.h>
+#include <rex/thread/fiber.h>
+#include <atomic>
+#include <cmath>
+#include <memory>
+#include <unistd.h>
 #include <vulkan/vulkan.h>
 #include <algorithm>
 #include <chrono>
@@ -192,6 +200,20 @@ static void RunVulkan(CAMetalLayer* layer,std::function<void(NSString*)> log) {
     log(@"END graphics test. Scope: official MoltenVK baseline, not the full Liberty renderer.");
 }
 
+using namespace std::chrono_literals;
+using Fiber = rex::thread::Fiber;
+struct FiberState { Fiber* root; int count = 0; bool intact = true; };
+static void FiberEntry(void* argument) {
+    auto* state = static_cast<FiberState*>(argument);
+    volatile uint64_t canary = 0x123456789ABCDEF0ULL;
+    for (;;) {
+        state->intact &= canary == 0x123456789ABCDEF0ULL;
+        ++state->count;
+        Fiber::SwitchTo(state->root);
+    }
+}
+
+
 @interface SurfaceView : UIView
 @end
 @implementation SurfaceView
@@ -204,22 +226,36 @@ static void RunVulkan(CAMetalLayer* layer,std::function<void(NSString*)> log) {
 @property(nonatomic,strong) NSMutableString* report;
 @property(nonatomic,strong) NSURL* logURL;
 @property(nonatomic,strong) UIButton* runButton;
+@property(nonatomic,strong) NSMutableArray<UIButton*>* testButtons;
+@property(nonatomic,strong) AVAudioPlayer* player;
+@property(nonatomic) BOOL busy;
+- (void)record:(NSString*)line;
 @end
 @implementation GraphicsController
 - (void)viewDidLoad {
-    [super viewDidLoad];self.view.backgroundColor=UIColor.systemBackgroundColor;
-    NSURL* doc=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;self.logURL=[doc URLByAppendingPathComponent:@"liberty-vulkan-probe.log"];
-    self.report=[NSMutableString stringWithString:[NSString stringWithContentsOfURL:self.logURL encoding:NSUTF8StringEncoding error:nil] ?: @""];
-    UIStackView* stack=[[UIStackView alloc] init];stack.axis=UILayoutConstraintAxisVertical;stack.spacing=10;stack.translatesAutoresizingMaskIntoConstraints=NO;
-    UILabel* title=[UILabel new];title.text=@"Liberty Vulkan graphics check";title.font=[UIFont preferredFontForTextStyle:UIFontTextStyleTitle2];[stack addArrangedSubview:title];
-    UILabel* explanation=[UILabel new];explanation.text=@"Run the test while the app stays open. An orange triangle should appear for about 3 seconds. Then share the log. No game files are needed.";explanation.numberOfLines=0;[stack addArrangedSubview:explanation];
-    self.surface=[SurfaceView new];self.surface.backgroundColor=UIColor.blackColor;[stack addArrangedSubview:self.surface];[self.surface.heightAnchor constraintEqualToConstant:200].active=YES;
-    self.runButton=[UIButton buttonWithType:UIButtonTypeSystem];[self.runButton setTitle:@"Run Vulkan graphics test" forState:UIControlStateNormal];[self.runButton addTarget:self action:@selector(runTest) forControlEvents:UIControlEventTouchUpInside];[stack addArrangedSubview:self.runButton];
-    UIButton* confirm=[UIButton buttonWithType:UIButtonTypeSystem];[confirm setTitle:@"I saw the orange triangle" forState:UIControlStateNormal];[confirm addTarget:self action:@selector(confirmTriangle) forControlEvents:UIControlEventTouchUpInside];[stack addArrangedSubview:confirm];
-    UIButton* share=[UIButton buttonWithType:UIButtonTypeSystem];[share setTitle:@"Share saved log" forState:UIControlStateNormal];[share addTarget:self action:@selector(shareLog:) forControlEvents:UIControlEventTouchUpInside];[stack addArrangedSubview:share];
-    self.output=[UITextView new];self.output.editable=NO;self.output.font=[UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular];self.output.text=self.report;[stack addArrangedSubview:self.output];[self.view addSubview:stack];UILayoutGuide* safe=self.view.safeAreaLayoutGuide;
-    [NSLayoutConstraint activateConstraints:@[[stack.topAnchor constraintEqualToAnchor:safe.topAnchor constant:12],[stack.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor constant:-12],[stack.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:16],[stack.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-16]]];
-    [self record:[NSString stringWithFormat:@"--- Vulkan probe 0.3 launch: %@ %@ ---",UIDevice.currentDevice.systemName,UIDevice.currentDevice.systemVersion]];
+    [super viewDidLoad]; self.view.backgroundColor=UIColor.systemBackgroundColor;
+    NSURL* doc=[NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+    self.logURL=[doc URLByAppendingPathComponent:@"liberty-test-lab.log"];
+    NSString* saved=[NSString stringWithContentsOfURL:self.logURL encoding:NSUTF8StringEncoding error:nil];
+    if(!saved) saved=[NSString stringWithContentsOfURL:[doc URLByAppendingPathComponent:@"liberty-vulkan-probe.log"] encoding:NSUTF8StringEncoding error:nil];
+    self.report=[NSMutableString stringWithString:saved ?: @""];
+    self.testButtons=[NSMutableArray array];
+    UIScrollView* scroll=[UIScrollView new];scroll.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:scroll];
+    UIStackView* stack=[UIStackView new];stack.axis=UILayoutConstraintAxisVertical;stack.spacing=10;stack.translatesAutoresizingMaskIntoConstraints=NO;[scroll addSubview:stack];
+    UILabel* title=[UILabel new];title.text=@"Liberty Test Lab";title.font=[UIFont preferredFontForTextStyle:UIFontTextStyleTitle1];[stack addArrangedSubview:title];
+    UILabel* explanation=[UILabel new];explanation.text=@"One app for current and future checks. Run tests individually while the app stays open, then share the combined log. GTA IV is not included.";explanation.numberOfLines=0;[stack addArrangedSubview:explanation];
+    self.surface=[SurfaceView new];self.surface.backgroundColor=UIColor.blackColor;[stack addArrangedSubview:self.surface];[self.surface.heightAnchor constraintEqualToConstant:180].active=YES;
+    NSArray* labels=@[@"Test native Metal display",@"Test file storage",@"Play audio test tone",@"Test runtime memory",@"Test runtime threads and events",@"Test runtime fibre switching",@"Test Vulkan shaders and presentation"];
+    SEL actions[]={@selector(metalTest),@selector(storageTest),@selector(audioTest),@selector(memoryTest),@selector(threadTest),@selector(fiberTest),@selector(runTest)};
+    for(NSUInteger i=0;i<labels.count;++i){UIButton* button=[UIButton buttonWithType:UIButtonTypeSystem];[button setTitle:labels[i] forState:UIControlStateNormal];button.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;[button addTarget:self action:actions[i] forControlEvents:UIControlEventTouchUpInside];[stack addArrangedSubview:button];[self.testButtons addObject:button];if(i==6)self.runButton=button;}
+    UIButton* audible=[UIButton buttonWithType:UIButtonTypeSystem];[audible setTitle:@"I heard the test tone" forState:UIControlStateNormal];[audible addTarget:self action:@selector(confirmAudio) forControlEvents:UIControlEventTouchUpInside];[stack addArrangedSubview:audible];
+    UIButton* confirm=[UIButton buttonWithType:UIButtonTypeSystem];[confirm setTitle:@"I saw the orange Vulkan triangle" forState:UIControlStateNormal];[confirm addTarget:self action:@selector(confirmTriangle) forControlEvents:UIControlEventTouchUpInside];[stack addArrangedSubview:confirm];
+    UIButton* share=[UIButton buttonWithType:UIButtonTypeSystem];[share setTitle:@"Share combined log" forState:UIControlStateNormal];[share addTarget:self action:@selector(shareLog:) forControlEvents:UIControlEventTouchUpInside];[stack addArrangedSubview:share];
+    self.output=[UITextView new];self.output.editable=NO;self.output.font=[UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular];self.output.text=self.report;[self.output.heightAnchor constraintEqualToConstant:300].active=YES;[stack addArrangedSubview:self.output];
+    UILayoutGuide* safe=self.view.safeAreaLayoutGuide;
+    [NSLayoutConstraint activateConstraints:@[[scroll.topAnchor constraintEqualToAnchor:safe.topAnchor],[scroll.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor],[scroll.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],[scroll.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],[stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:12],[stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-12],[stack.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor constant:16],[stack.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-16],[stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-32]]];
+    [self record:[NSString stringWithFormat:@"--- Liberty Test Lab 0.4 launch: %@ %@; RAM %llu MiB ---",UIDevice.currentDevice.systemName,UIDevice.currentDevice.systemVersion,NSProcessInfo.processInfo.physicalMemory/1048576]];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(stopAudio) name:UIApplicationWillResignActiveNotification object:nil];
 }
 - (void)record:(NSString*)line {
     @synchronized(self) {
@@ -228,16 +264,131 @@ static void RunVulkan(CAMetalLayer* layer,std::function<void(NSString*)> log) {
     }
 }
 - (void)runTest {
-    self.runButton.enabled=NO;[self.surface layoutIfNeeded];CAMetalLayer* layer=(CAMetalLayer*)self.surface.layer;
+    if(self.busy) return;
+    [self.surface layoutIfNeeded];CAMetalLayer* layer=(CAMetalLayer*)self.surface.layer;
     layer.device=MTLCreateSystemDefaultDevice();layer.pixelFormat=MTLPixelFormatBGRA8Unorm;layer.framebufferOnly=YES;
-    [self record:@"BEGIN Vulkan shader, GPU readback and presentation test"];
-    std::thread([self,layer]{@autoreleasepool {
-        try {RunVulkan(layer,[self](NSString* message){[self record:message];});}
-        catch(const std::exception& e){[self record:[NSString stringWithFormat:@"FAIL graphics: %s",e.what()]];}
-        catch(...){[self record:@"FAIL unknown graphics exception"];}
-        dispatch_async(dispatch_get_main_queue(),^{self.runButton.enabled=YES;});
-    }}).detach();
+    [self run:@"Vulkan graphics" block:^{RunVulkan(layer,[self](NSString* message){[self record:message];});}];
 }
+- (void)run:(NSString*)name block:(void (^)(void))test {
+    if(self.busy) return;
+    self.busy = YES;
+    for(UIButton* b in self.testButtons) b.enabled = NO;
+    [self record:[@"BEGIN " stringByAppendingString:name]];
+    std::thread([self, test, name] {
+        @autoreleasepool {
+            try { test(); }
+            catch(const std::exception& e) { [self record:[NSString stringWithFormat:@"FAIL exception: %s",e.what()]]; }
+            catch(...) { [self record:@"FAIL unknown C++ exception"]; }
+            [self record:[@"END " stringByAppendingString:name]];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                self.busy = NO;
+                for(UIButton* b in self.testButtons) b.enabled = YES;
+            });
+        }
+    }).detach();
+}
+- (void)memoryTest {
+    [self run:@"memory" block:^{
+        using namespace rex::memory;
+        const size_t size = static_cast<size_t>(getpagesize()) * 4;
+        void* allocation = AllocFixed(nullptr, size, AllocationType::kReserveCommit, PageAccess::kReadWrite);
+        if(!allocation) { [self record:@"FAIL runtime allocation"]; return; }
+        auto* bytes = static_cast<volatile unsigned char*>(allocation);
+        for(size_t i=0;i<size;++i) bytes[i] = static_cast<unsigned char>(i*37);
+        bool valid = true;
+        for(size_t i=0;i<size;++i) if(bytes[i] != static_cast<unsigned char>(i*37)) valid = false;
+        [self record:valid ? @"PASS runtime page allocation and read-back" : @"FAIL memory data mismatch"];
+        size_t length = 0; PageAccess access = PageAccess::kNoAccess;
+        bool query = QueryProtect(allocation,length,access);
+        [self record:(query && length>=size && access==PageAccess::kReadWrite) ? @"PASS memory region query (read/write)" : @"FAIL memory region query"];
+        bool readonly = Protect(allocation,size,PageAccess::kReadOnly);
+        query = QueryProtect(allocation,length,access);
+        [self record:(readonly && query && access==PageAccess::kReadOnly) ? @"PASS protection change to read-only" : @"FAIL read-only protection/query"];
+        bool writable = Protect(allocation,size,PageAccess::kReadWrite);
+        [self record:writable ? @"PASS protection restored to read/write" : @"FAIL restoring page protection"];
+        if(writable) { bytes[0]=0x5A; [self record:bytes[0]==0x5A ? @"PASS write after restoring protection" : @"FAIL restored write"]; }
+        [self record:DeallocFixed(allocation,size,DeallocationType::kRelease) ? @"PASS runtime page release" : @"FAIL runtime page release"];
+        [self record:@"Scope: small anonymous data pages; no executable pages or guest fixed-address reservation tested."];
+    }];
+}
+- (void)threadTest {
+    [self run:@"threads/events" block:^{
+        using namespace rex::thread;
+        auto event = Event::CreateAutoResetEvent(false);
+        bool empty = event && Wait(event.get(),false,0ms)==WaitResult::kTimeout;
+        if(event) event->Set();
+        bool signaled = event && Wait(event.get(),false,100ms)==WaitResult::kSuccess;
+        bool reset = event && Wait(event.get(),false,0ms)==WaitResult::kTimeout;
+        [self record:(empty && signaled && reset) ? @"PASS runtime event timeout, signal and auto-reset" : @"FAIL runtime event operations"];
+        auto semaphore = Semaphore::Create(1,2);
+        bool sem = semaphore && Wait(semaphore.get(),false,100ms)==WaitResult::kSuccess;
+        sem = sem && Wait(semaphore.get(),false,0ms)==WaitResult::kTimeout;
+        int prior = -1;
+        sem = sem && semaphore->Release(1,&prior) && prior==0;
+        sem = sem && Wait(semaphore.get(),false,100ms)==WaitResult::kSuccess;
+        [self record:sem ? @"PASS runtime semaphore acquire/release" : @"FAIL runtime semaphore"];
+        auto marker = std::make_shared<std::atomic<int>>(0);
+        auto worker = Thread::Create(Thread::CreationParameters{},[marker] { marker->store(42); });
+        bool finished = worker && Wait(worker.get(),false,2000ms)==WaitResult::kSuccess;
+        [self record:(finished && marker->load()==42) ? @"PASS runtime thread creation, execution and completion wait" : @"FAIL runtime thread/completion wait"];
+        if(worker && !finished) { (void)worker.release(); [self record:@"Thread handle retained because completion was not confirmed."]; }
+        [self record:@"Scope: normal thread startup; thread suspension/resumption is not tested."];
+    }];
+}
+- (void)fiberTest {
+    [self run:@"fibres" block:^{
+        Fiber* root = Fiber::ConvertCurrentThread();
+        if(!root) { [self record:@"FAIL converting worker to fibre"]; return; }
+        FiberState state{root};
+        Fiber* child = Fiber::Create(256*1024,FiberEntry,&state);
+        if(!child) { root->Destroy(); [self record:@"FAIL creating fibre stack"]; return; }
+        [self record:@"Fibre stack created. Entering 100 switches; a crash here identifies the switching path."];
+        for(int i=0;i<100;++i) Fiber::SwitchTo(child);
+        bool pass = state.count==100 && state.intact && Fiber::Current()==root;
+        child->Destroy(); root->Destroy();
+        [self record:pass ? @"PASS 100 fibre round trips, stack canary and current-context tracking" : @"FAIL fibre result/context mismatch"];
+        [self record:@"Scope: basic cooperative switching; full guest register/SIMD preservation is not established."];
+    }];
+}
+
+- (void)metalTest {
+    if(self.busy) return;
+    [self.surface layoutIfNeeded];CAMetalLayer* layer=(CAMetalLayer*)self.surface.layer;
+    id<MTLDevice> device=MTLCreateSystemDefaultDevice();layer.device=device;layer.pixelFormat=MTLPixelFormatBGRA8Unorm;
+    [self run:@"native Metal display" block:^{
+        id<MTLCommandQueue> queue=[device newCommandQueue];id<CAMetalDrawable> drawable=[layer nextDrawable];id<MTLCommandBuffer> command=[queue commandBuffer];
+        if(!device||!queue||!drawable||!command){[self record:@"FAIL native Metal setup/drawable"];return;}
+        MTLRenderPassDescriptor* pass=[MTLRenderPassDescriptor renderPassDescriptor];pass.colorAttachments[0].texture=drawable.texture;pass.colorAttachments[0].loadAction=MTLLoadActionClear;pass.colorAttachments[0].storeAction=MTLStoreActionStore;pass.colorAttachments[0].clearColor=MTLClearColorMake(0.1,0.25,0.7,1);
+        id<MTLRenderCommandEncoder> encoder=[command renderCommandEncoderWithDescriptor:pass];if(!encoder){[self record:@"FAIL native Metal encoder"];return;}[encoder endEncoding];[command presentDrawable:drawable];[command commit];[command waitUntilCompleted];
+        [self record:command.status==MTLCommandBufferStatusCompleted ? @"PASS native Metal display command completed (blue panel)" : [NSString stringWithFormat:@"FAIL Metal: %@",command.error.localizedDescription]];
+    }];
+}
+- (void)storageTest {
+    [self run:@"file storage" block:^{
+        NSURL* file=[[self.logURL URLByDeletingLastPathComponent] URLByAppendingPathComponent:@"lab-storage-probe.tmp"];
+        NSData* expected=[@"Liberty Test Lab storage probe" dataUsingEncoding:NSUTF8StringEncoding];NSError* error=nil;
+        BOOL wrote=[expected writeToURL:file options:NSDataWritingAtomic error:&error];NSData* read=wrote ? [NSData dataWithContentsOfURL:file] : nil;
+        BOOL same=[expected isEqualToData:read];BOOL removed=wrote && [NSFileManager.defaultManager removeItemAtURL:file error:&error];
+        [self record:(wrote&&same&&removed)?@"PASS Documents file write, read-back and delete":[NSString stringWithFormat:@"FAIL storage: %@",error.localizedDescription ?: @"read-back mismatch"]];
+    }];
+}
+- (void)audioTest {
+    if(self.busy) return;
+    [self record:@"BEGIN audio tone"];
+    NSError* error=nil;AVAudioSession* session=AVAudioSession.sharedInstance;
+    if(![session setCategory:AVAudioSessionCategoryPlayback error:&error] || ![session setActive:YES error:&error]){[self record:[NSString stringWithFormat:@"FAIL audio session: %@",error.localizedDescription]];return;}
+    const uint32_t samples=12000, bytes=samples*2;std::vector<uint8_t> wav(44+bytes,0);
+    auto u16=[&](size_t offset,uint16_t v){wav[offset]=v&255;wav[offset+1]=v>>8;};
+    auto u32=[&](size_t offset,uint32_t v){for(int i=0;i<4;++i)wav[offset+i]=(v>>(i*8))&255;};
+    memcpy(wav.data(),"RIFF",4);u32(4,36+bytes);memcpy(wav.data()+8,"WAVEfmt ",8);u32(16,16);u16(20,1);u16(22,1);u32(24,48000);u32(28,96000);u16(32,2);u16(34,16);memcpy(wav.data()+36,"data",4);u32(40,bytes);
+    for(uint32_t i=0;i<samples;++i){double fade=std::min(1.0,std::min(double(i)/240.0,double(samples-i)/240.0));int16_t value=int16_t(std::sin(double(i)*2.0*3.141592653589793*440.0/48000.0)*3900.0*fade);u16(44+i*2,uint16_t(value));}
+    [self.player stop];self.player=[[AVAudioPlayer alloc] initWithData:[NSData dataWithBytes:wav.data() length:wav.size()] error:&error];
+    if(self.player && [self.player play]) [self record:@"Audio: quarter-second 440 Hz tone scheduled; confirm if audible"];
+    else [self record:[NSString stringWithFormat:@"FAIL audio player: %@",error.localizedDescription ?: @"play returned false"]];
+    [self record:@"END audio tone scheduling"];
+}
+- (void)confirmAudio {if(self.player)[self record:@"USER CONFIRMED audible audio test tone"];else [self record:@"Audio confirmation ignored: play a test tone first"] ;}
+- (void)stopAudio {[self.player stop];[AVAudioSession.sharedInstance setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil];}
 - (void)confirmTriangle {[self record:@"USER CONFIRMED orange triangle visible"] ;}
 - (void)shareLog:(UIButton*)sender {UIActivityViewController* c=[[UIActivityViewController alloc] initWithActivityItems:@[self.logURL] applicationActivities:nil];c.popoverPresentationController.sourceView=sender;c.popoverPresentationController.sourceRect=sender.bounds;[self presentViewController:c animated:YES completion:nil];}
 @end
