@@ -1,0 +1,123 @@
+diff --git a/glue/rexglue-sdk-main/include/rex/ui/vulkan/presenter.h b/glue/rexglue-sdk-main/include/rex/ui/vulkan/presenter.h
+index 1669d27..587c574 100644
+--- a/glue/rexglue-sdk-main/include/rex/ui/vulkan/presenter.h
++++ b/glue/rexglue-sdk-main/include/rex/ui/vulkan/presenter.h
+@@ -198,7 +198,33 @@ class VulkanPresenter final : public Presenter {
+   }
+ 
+   static Surface::TypeFlags GetSurfaceTypesSupportedByInstance(
+-      const VulkanInstance::Extensions& instance_extensions);
++      const VulkanInstance::Extensions& instance_extensions) {
++  if (!instance_extensions.ext_KHR_surface) {
++    return 0;
++  }
++  Surface::TypeFlags type_flags = 0;
++#if REX_PLATFORM_ANDROID
++  if (instance_extensions.ext_KHR_android_surface) {
++    type_flags |= Surface::kTypeFlag_AndroidNativeWindow;
++  }
++#endif
++#if REX_PLATFORM_GNU_LINUX
++  if (instance_extensions.ext_KHR_xcb_surface) {
++    type_flags |= Surface::kTypeFlag_XcbWindow;
++  }
++#endif
++#if REX_PLATFORM_WIN32
++  if (instance_extensions.ext_KHR_win32_surface) {
++    type_flags |= Surface::kTypeFlag_Win32Hwnd;
++  }
++#endif
++#if REX_PLATFORM_MAC
++  if (instance_extensions.ext_EXT_metal_surface) {
++    type_flags |= Surface::kTypeFlag_CAMetalLayer;
++  }
++#endif
++  return type_flags;
++}
+   Surface::TypeFlags GetSupportedSurfaceTypes() const override;
+ 
+   bool CaptureGuestOutput(RawImage& image_out) override;
+diff --git a/glue/rexglue-sdk-main/src/ui/vulkan/vulkan_instance.cpp b/glue/rexglue-sdk-main/src/ui/vulkan/vulkan_instance.cpp
+index eb0ad80..98e4176 100644
+--- a/glue/rexglue-sdk-main/src/ui/vulkan/vulkan_instance.cpp
++++ b/glue/rexglue-sdk-main/src/ui/vulkan/vulkan_instance.cpp
+@@ -30,6 +30,13 @@
+ #include "vulkan_moltenvk.h"
+ #endif
+ 
++#if REX_PLATFORM_IOS
++// iOS consumers link MoltenVK into the application instead of searching a
++// desktop Vulkan SDK or loading an arbitrary library from the filesystem.
++extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance, const char*);
++extern "C" VKAPI_ATTR void VKAPI_CALL vkDestroyInstance(VkInstance, const VkAllocationCallbacks*);
++#endif
++
+ REXCVAR_DEFINE_BOOL(vulkan_log_debug_messages, true, "UI/Vulkan", "Log Vulkan debug messages");
+ 
+ #if REX_PLATFORM_MAC
+@@ -55,7 +62,11 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
+ 
+   bool functions_loaded = true;
+   bool loader_loaded = false;
+-#if REX_PLATFORM_MAC
++#if REX_PLATFORM_IOS
++  ifn.vkGetInstanceProcAddr = &::vkGetInstanceProcAddr;
++  ifn.vkDestroyInstance = &::vkDestroyInstance;
++  loader_loaded = true;
++#elif REX_PLATFORM_MAC
+   const MacOSVulkanRuntimePaths macos_runtime_paths = DetectMacOSVulkanRuntimePaths();
+   ConfigureMacOSVulkanEnvironment(macos_runtime_paths);
+ 
+@@ -92,11 +103,13 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(const bool with_surface,
+   }
+ #endif
+ 
++#if !REX_PLATFORM_IOS
+ #define XE_VULKAN_LOAD_LOADER_FUNCTION(name) \
+   functions_loaded &= (ifn.name = vulkan_instance->loader_.GetSymbol<PFN_##name>(#name)) != nullptr;
+   XE_VULKAN_LOAD_LOADER_FUNCTION(vkGetInstanceProcAddr);
+   XE_VULKAN_LOAD_LOADER_FUNCTION(vkDestroyInstance);
+ #undef XE_VULKAN_LOAD_LOADER_FUNCTION
++#endif
+   if (!functions_loaded) {
+     REXLOG_ERROR("Failed to get Vulkan loader function pointers");
+     return nullptr;
+diff --git a/glue/rexglue-sdk-main/src/ui/vulkan/vulkan_presenter.cpp b/glue/rexglue-sdk-main/src/ui/vulkan/vulkan_presenter.cpp
+index 7289bd4..f4e88a7 100644
+--- a/glue/rexglue-sdk-main/src/ui/vulkan/vulkan_presenter.cpp
++++ b/glue/rexglue-sdk-main/src/ui/vulkan/vulkan_presenter.cpp
+@@ -342,34 +342,6 @@ VulkanPresenter::~VulkanPresenter() {
+ }
+ 
+ 
+-Surface::TypeFlags VulkanPresenter::GetSurfaceTypesSupportedByInstance(
+-    const VulkanInstance::Extensions& instance_extensions) {
+-  if (!instance_extensions.ext_KHR_surface) {
+-    return 0;
+-  }
+-  Surface::TypeFlags type_flags = 0;
+-#if REX_PLATFORM_ANDROID
+-  if (instance_extensions.ext_KHR_android_surface) {
+-    type_flags |= Surface::kTypeFlag_AndroidNativeWindow;
+-  }
+-#endif
+-#if REX_PLATFORM_GNU_LINUX
+-  if (instance_extensions.ext_KHR_xcb_surface) {
+-    type_flags |= Surface::kTypeFlag_XcbWindow;
+-  }
+-#endif
+-#if REX_PLATFORM_WIN32
+-  if (instance_extensions.ext_KHR_win32_surface) {
+-    type_flags |= Surface::kTypeFlag_Win32Hwnd;
+-  }
+-#endif
+-#if REX_PLATFORM_MAC
+-  if (instance_extensions.ext_EXT_metal_surface) {
+-    type_flags |= Surface::kTypeFlag_CAMetalLayer;
+-  }
+-#endif
+-  return type_flags;
+-}
+ 
+ Surface::TypeFlags VulkanPresenter::GetSupportedSurfaceTypes() const {
+   if (!vulkan_device_->extensions().ext_KHR_swapchain) {

@@ -1,4 +1,5 @@
 #import <UIKit/UIKit.h>
+#include "RuntimeBackend.h"
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
 #import <AVFoundation/AVFoundation.h>
@@ -245,8 +246,8 @@ static void FiberEntry(void* argument) {
     UILabel* title=[UILabel new];title.text=@"Liberty Test Lab";title.font=[UIFont preferredFontForTextStyle:UIFontTextStyleTitle1];[stack addArrangedSubview:title];
     UILabel* explanation=[UILabel new];explanation.text=@"One app for current and future checks. Run tests individually while the app stays open, then share the combined log. GTA IV is not included.";explanation.numberOfLines=0;[stack addArrangedSubview:explanation];
     self.surface=[SurfaceView new];self.surface.backgroundColor=UIColor.blackColor;[stack addArrangedSubview:self.surface];[self.surface.heightAnchor constraintEqualToConstant:180].active=YES;
-    NSArray* labels=@[@"Test native Metal display",@"Test file storage",@"Play audio test tone",@"Test runtime memory",@"Test runtime threads and events",@"Test runtime fibre switching",@"Test Vulkan shaders and presentation"];
-    SEL actions[]={@selector(metalTest),@selector(storageTest),@selector(audioTest),@selector(memoryTest),@selector(threadTest),@selector(fiberTest),@selector(runTest)};
+    NSArray* labels=@[@"Test native Metal display",@"Test file storage",@"Play audio test tone",@"Test runtime memory",@"Test runtime threads and events",@"Test runtime fibre switching",@"Test Vulkan shaders and presentation",@"Test actual runtime Vulkan backend"];
+    SEL actions[]={@selector(metalTest),@selector(storageTest),@selector(audioTest),@selector(memoryTest),@selector(threadTest),@selector(fiberTest),@selector(runTest),@selector(runtimeBackendTest)};
     for(NSUInteger i=0;i<labels.count;++i){UIButton* button=[UIButton buttonWithType:UIButtonTypeSystem];[button setTitle:labels[i] forState:UIControlStateNormal];button.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeading;[button addTarget:self action:actions[i] forControlEvents:UIControlEventTouchUpInside];[stack addArrangedSubview:button];[self.testButtons addObject:button];if(i==6)self.runButton=button;}
     UIButton* audible=[UIButton buttonWithType:UIButtonTypeSystem];[audible setTitle:@"I heard the test tone" forState:UIControlStateNormal];[audible addTarget:self action:@selector(confirmAudio) forControlEvents:UIControlEventTouchUpInside];[stack addArrangedSubview:audible];
     UIButton* confirm=[UIButton buttonWithType:UIButtonTypeSystem];[confirm setTitle:@"I saw the orange Vulkan triangle" forState:UIControlStateNormal];[confirm addTarget:self action:@selector(confirmTriangle) forControlEvents:UIControlEventTouchUpInside];[stack addArrangedSubview:confirm];
@@ -254,7 +255,7 @@ static void FiberEntry(void* argument) {
     self.output=[UITextView new];self.output.editable=NO;self.output.font=[UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular];self.output.text=self.report;[self.output.heightAnchor constraintEqualToConstant:300].active=YES;[stack addArrangedSubview:self.output];
     UILayoutGuide* safe=self.view.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[[scroll.topAnchor constraintEqualToAnchor:safe.topAnchor],[scroll.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor],[scroll.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],[scroll.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],[stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:12],[stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-12],[stack.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor constant:16],[stack.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-16],[stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-32]]];
-    [self record:[NSString stringWithFormat:@"--- Liberty Test Lab 0.4 launch: %@ %@; RAM %llu MiB ---",UIDevice.currentDevice.systemName,UIDevice.currentDevice.systemVersion,NSProcessInfo.processInfo.physicalMemory/1048576]];
+    [self record:[NSString stringWithFormat:@"--- Liberty Test Lab 0.5 launch: %@ %@; RAM %llu MiB ---",UIDevice.currentDevice.systemName,UIDevice.currentDevice.systemVersion,NSProcessInfo.processInfo.physicalMemory/1048576]];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(stopAudio) name:UIApplicationWillResignActiveNotification object:nil];
 }
 - (void)record:(NSString*)line {
@@ -389,6 +390,14 @@ static void FiberEntry(void* argument) {
 }
 - (void)confirmAudio {if(self.player)[self record:@"USER CONFIRMED audible audio test tone"];else [self record:@"Audio confirmation ignored: play a test tone first"] ;}
 - (void)stopAudio {[self.player stop];[AVAudioSession.sharedInstance setActive:NO withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation error:nil];}
+- (void)runtimeBackendTest {
+    [self run:@"actual runtime Vulkan backend" block:^{
+        RunRuntimeBackend([](const char* message,void* context){
+            GraphicsController* owner=(__bridge GraphicsController*)context;
+            [owner record:[NSString stringWithUTF8String:message] ?: @"Runtime log encoding error"];
+        },(__bridge void*)self);
+    }];
+}
 - (void)confirmTriangle {[self record:@"USER CONFIRMED orange triangle visible"] ;}
 - (void)shareLog:(UIButton*)sender {UIActivityViewController* c=[[UIActivityViewController alloc] initWithActivityItems:@[self.logURL] applicationActivities:nil];c.popoverPresentationController.sourceView=sender;c.popoverPresentationController.sourceRect=sender.bounds;[self presentViewController:c animated:YES completion:nil];}
 @end

@@ -21,3 +21,16 @@ set_target_properties(VulkanProbe PROPERTIES
  XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO
  XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
  XCODE_ATTRIBUTE_ENABLE_BITCODE NO)
+
+# Compile the runtime's actual Vulkan instance/device layer with its feature checks.
+set(BACKEND_SDK "${CMAKE_CURRENT_LIST_DIR}/../upstream/glue/rexglue-sdk-main")
+target_sources(VulkanProbe PRIVATE
+    RuntimeBackend.cpp
+    "${BACKEND_SDK}/src/ui/vulkan/vulkan_instance.cpp"
+    "${BACKEND_SDK}/src/ui/vulkan/vulkan_device.cpp"
+    "${BACKEND_SDK}/src/ui/renderdoc_api.cpp"
+    "${BACKEND_SDK}/src/graphics/gta4_native/temporal/dlss_bootstrap.cpp")
+target_include_directories(VulkanProbe PRIVATE "${BACKEND_SDK}/src")
+# ARC applies to Objective-C++ only, not the runtime's plain C++ translation units.
+set_property(TARGET VulkanProbe PROPERTY COMPILE_OPTIONS "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>" -fno-char8_t -fno-strict-aliasing)
+target_compile_definitions(VulkanProbe PRIVATE FMT_USE_CONSTEVAL=0 REXGLUE_BUILD_CONFIG="Release")
