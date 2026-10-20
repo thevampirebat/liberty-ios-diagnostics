@@ -1,0 +1,63 @@
+name: Compile Liberty runtime core for iOS
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['runtime-core/**', '.github/workflows/runtime-core.yml']
+permissions:
+  contents: read
+jobs:
+  runtime-core:
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: OZORDI/LibertyRecomp
+          ref: 1922957d9f5a09acf0af12b918c43a910b3a13a5
+          path: upstream
+      - name: Prepare pinned core dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          cd upstream
+          git submodule update --init --depth 1 --jobs 4 \
+            glue/rexglue-sdk-main/thirdparty/fmt \
+            glue/rexglue-sdk-main/thirdparty/spdlog \
+            glue/rexglue-sdk-main/thirdparty/xxHash \
+            glue/rexglue-sdk-main/thirdparty/utfcpp \
+            glue/rexglue-sdk-main/thirdparty/simde \
+            glue/rexglue-sdk-main/thirdparty/tomlplusplus \
+            glue/rexglue-sdk-main/thirdparty/cli11
+      - name: Configure iOS core compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version | tee logs/environment.txt
+          cmake -S runtime-core -B build/runtime-core -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee logs/configure.txt
+      - name: Compile actual runtime core
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build/runtime-core --config Release --target liberty_ios_core --parallel 3 \
+            -- CODE_SIGNING_ALLOWED=NO 2>&1 | tee logs/compile.txt
+      - name: Upload compile logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-core-build-logs
+          path: logs/
+          retention-days: 14
+      - name: Upload compiled static library
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-core-ios-library
+          path: build/runtime-core/**/libliberty_ios_core.a
+          if-no-files-found: error
