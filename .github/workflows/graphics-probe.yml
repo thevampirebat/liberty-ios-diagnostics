@@ -1,0 +1,67 @@
+name: Build Vulkan graphics test IPA
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['graphics-probe/**', '.github/workflows/graphics-probe.yml']
+permissions:
+  contents: read
+jobs:
+  graphics:
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch official MoltenVK iOS 1.4.2
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p vendor logs
+          curl -fL --retry 3 https://github.com/KhronosGroup/MoltenVK/releases/download/v1.4.2/MoltenVK-ios.tar -o vendor/MoltenVK-ios.tar
+          echo "b5d947b1660e6e9fed40b9cd2387e160aaab9e80b775c0cef7e14059405178c1  vendor/MoltenVK-ios.tar" | shasum -a 256 -c -
+          shasum -a 256 vendor/MoltenVK-ios.tar | tee logs/moltenvk-sha256.txt
+          tar -xf vendor/MoltenVK-ios.tar -C vendor
+          xcodebuild -version | tee logs/environment.txt
+      - name: Compile SPIR-V test shaders
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew list glslang >/dev/null 2>&1 || brew install glslang
+          glslangValidator --version | tee logs/shader-tools.txt
+          glslangValidator -V graphics-probe/triangle.vert -o graphics-probe/triangle.vert.spv
+          glslangValidator -V graphics-probe/triangle.frag -o graphics-probe/triangle.frag.spv
+      - name: Build graphics test app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S graphics-probe -B build/graphics -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO 2>&1 | tee logs/configure.txt
+          cmake --build build/graphics --config Release --target VulkanProbe --parallel 3 \
+            -- CODE_SIGNING_ALLOWED=NO 2>&1 | tee logs/compile.txt
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output/Payload
+          app="$(python3 -c 'from pathlib import Path; p=list(Path("build/graphics").rglob("VulkanProbe.app")); assert len(p)==1,p; print(p[0])')"
+          test -f "$app/triangle.vert.spv"
+          test -f "$app/triangle.frag.spv"
+          ditto "$app" output/Payload/VulkanProbe.app
+          (cd output && zip -qry LibertyVulkanProbe-unsigned.ipa Payload)
+          unzip -t output/LibertyVulkanProbe-unsigned.ipa
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: LibertyVulkanProbe-unsigned-IPA
+          path: output/LibertyVulkanProbe-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulkan-probe-build-logs
+          path: logs/
+          retention-days: 14
