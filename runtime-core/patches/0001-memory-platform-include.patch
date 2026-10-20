@@ -1,5 +1,5 @@
 diff --git a/glue/rexglue-sdk-main/src/core/memory_mac.cpp b/glue/rexglue-sdk-main/src/core/memory_mac.cpp
-index 5bebf85..39c7313 100644
+index 5bebf85..c6f0730 100644
 --- a/glue/rexglue-sdk-main/src/core/memory_mac.cpp
 +++ b/glue/rexglue-sdk-main/src/core/memory_mac.cpp
 @@ -19,9 +19,13 @@
@@ -24,7 +24,7 @@ index 5bebf85..39c7313 100644
  #include <rex/string.h>
  
  #if REX_PLATFORM_ANDROID
-@@ -358,24 +361,35 @@ bool Protect(void* base_address, size_t length, PageAccess access, PageAccess* o
+@@ -358,24 +361,36 @@ bool Protect(void* base_address, size_t length, PageAccess access, PageAccess* o
  
  bool QueryProtect(void* base_address, size_t& length, PageAccess& access_out) {
  #if REX_PLATFORM_MAC
@@ -49,7 +49,8 @@ index 5bebf85..39c7313 100644
 +      vm_region_64(
 +#else
 +      mach_vm_region(
-+#endifmach_task_self(), &address, &region_size, VM_REGION_BASIC_INFO_64,
++#endif
++          mach_task_self(), &address, &region_size, VM_REGION_BASIC_INFO_64,
                       reinterpret_cast<vm_region_info_t>(&info), &info_count, &object_name);
    if (kr != KERN_SUCCESS) {
      return false;
