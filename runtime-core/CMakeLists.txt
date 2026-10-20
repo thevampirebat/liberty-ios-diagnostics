@@ -32,3 +32,17 @@ add_subdirectory("${REXSDK}/src/core" rexcore)
 # Collect the actual upstream object library, not substitute implementations.
 add_library(liberty_ios_core STATIC $<TARGET_OBJECTS:rexcore>)
 target_link_libraries(liberty_ios_core PRIVATE rexcore)
+
+# A UIKit app exercises the real core on a physical device.
+add_executable(RuntimeSmoke MACOSX_BUNDLE "${CMAKE_CURRENT_LIST_DIR}/RuntimeSmoke.mm")
+target_link_libraries(RuntimeSmoke PRIVATE rexcore "-framework UIKit" "-framework Foundation")
+target_compile_options(RuntimeSmoke PRIVATE -fobjc-arc)
+set_target_properties(RuntimeSmoke PROPERTIES
+    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_LIST_DIR}/Info.plist.in"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "com.libertydiagnostics.runtimecore"
+    MACOSX_BUNDLE_BUNDLE_NAME "Liberty Runtime Check"
+    MACOSX_BUNDLE_BUNDLE_VERSION "2"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "0.2"
+    XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "NO"
+    XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+    XCODE_ATTRIBUTE_ENABLE_BITCODE "NO")

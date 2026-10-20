@@ -1,4 +1,4 @@
-name: Compile Liberty runtime core for iOS
+name: Build Liberty runtime test IPA
 on:
   workflow_dispatch:
   push:
@@ -53,8 +53,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cmake --build build/runtime-core --config Release --target liberty_ios_core --parallel 3 \
+          cmake --build build/runtime-core --config Release --target RuntimeSmoke --parallel 3 \
             -- CODE_SIGNING_ALLOWED=NO 2>&1 | tee logs/compile.txt
+      - name: Package unsigned runtime IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output/Payload
+          app="$(python3 -c 'from pathlib import Path; p=list(Path("build/runtime-core").rglob("RuntimeSmoke.app")); assert len(p)==1,p; print(p[0])')"
+          test -f "$app/RuntimeSmoke"
+          ditto "$app" output/Payload/RuntimeSmoke.app
+          (cd output && zip -qry LibertyRuntimeSmoke-unsigned.ipa Payload)
+          unzip -t output/LibertyRuntimeSmoke-unsigned.ipa
+      - name: Upload unsigned runtime IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: LibertyRuntimeSmoke-unsigned-IPA
+          path: output/LibertyRuntimeSmoke-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
       - name: Upload compile logs
         if: always()
         uses: actions/upload-artifact@v4
