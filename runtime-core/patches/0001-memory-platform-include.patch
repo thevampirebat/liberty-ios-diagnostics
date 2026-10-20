@@ -1,0 +1,21 @@
+diff --git a/glue/rexglue-sdk-main/src/core/memory_mac.cpp b/glue/rexglue-sdk-main/src/core/memory_mac.cpp
+index 5bebf85..7948869 100644
+--- a/glue/rexglue-sdk-main/src/core/memory_mac.cpp
++++ b/glue/rexglue-sdk-main/src/core/memory_mac.cpp
+@@ -19,6 +19,8 @@
+ 
+ #include <fcntl.h>
+ 
++#include <rex/platform.h>
++
+ #if REX_PLATFORM_MAC
+ #include <mach/mach.h>
+ #include <mach/mach_vm.h>
+@@ -32,7 +34,6 @@
+ #include <rex/logging.h>
+ #include <rex/math.h>
+ #include <rex/memory/utils.h>
+-#include <rex/platform.h>
+ #include <rex/string.h>
+ 
+ #if REX_PLATFORM_ANDROID

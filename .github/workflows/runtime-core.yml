@@ -31,6 +31,8 @@ jobs:
             glue/rexglue-sdk-main/thirdparty/simde \
             glue/rexglue-sdk-main/thirdparty/tomlplusplus \
             glue/rexglue-sdk-main/thirdparty/cli11
+      - name: Apply reviewed iOS runtime fixes
+        run: git -C upstream apply --check ../runtime-core/patches/*.patch && git -C upstream apply ../runtime-core/patches/*.patch
       - name: Configure iOS core compile
         shell: bash
         run: |
