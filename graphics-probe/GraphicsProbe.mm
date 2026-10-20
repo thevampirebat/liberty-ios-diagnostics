@@ -1,4 +1,5 @@
 #import <UIKit/UIKit.h>
+#import <dispatch/dispatch.h>
 #include "RuntimeBackend.h"
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
@@ -255,7 +256,7 @@ static void FiberEntry(void* argument) {
     self.output=[UITextView new];self.output.editable=NO;self.output.font=[UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular];self.output.text=self.report;[self.output.heightAnchor constraintEqualToConstant:300].active=YES;[stack addArrangedSubview:self.output];
     UILayoutGuide* safe=self.view.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[[scroll.topAnchor constraintEqualToAnchor:safe.topAnchor],[scroll.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor],[scroll.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],[scroll.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],[stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:12],[stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-12],[stack.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor constant:16],[stack.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-16],[stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-32]]];
-    [self record:[NSString stringWithFormat:@"--- Liberty Test Lab 0.5 launch: %@ %@; RAM %llu MiB ---",UIDevice.currentDevice.systemName,UIDevice.currentDevice.systemVersion,NSProcessInfo.processInfo.physicalMemory/1048576]];
+    [self record:[NSString stringWithFormat:@"--- Liberty Test Lab 0.6 launch: %@ %@; RAM %llu MiB ---",UIDevice.currentDevice.systemName,UIDevice.currentDevice.systemVersion,NSProcessInfo.processInfo.physicalMemory/1048576]];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(stopAudio) name:UIApplicationWillResignActiveNotification object:nil];
 }
 - (void)record:(NSString*)line {
@@ -275,18 +276,27 @@ static void FiberEntry(void* argument) {
     self.busy = YES;
     for(UIButton* b in self.testButtons) b.enabled = NO;
     [self record:[@"BEGIN " stringByAppendingString:name]];
-    std::thread([self, test, name] {
+    // Keep the controller, name and copied Objective-C test block owned by
+    // libdispatch across the asynchronous boundary.
+    void (^ownedTest)(void) = [test copy];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         @autoreleasepool {
-            try { test(); }
-            catch(const std::exception& e) { [self record:[NSString stringWithFormat:@"FAIL exception: %s",e.what()]]; }
-            catch(...) { [self record:@"FAIL unknown C++ exception"]; }
-            [self record:[@"END " stringByAppendingString:name]];
-            dispatch_async(dispatch_get_main_queue(), ^{
-                self.busy = NO;
-                for(UIButton* b in self.testButtons) b.enabled = YES;
-            });
+            [self record:[@"WORKER ENTER " stringByAppendingString:name]];
+            @try {
+                try { ownedTest(); }
+                catch(const std::exception& e) { [self record:[NSString stringWithFormat:@"FAIL exception: %s",e.what()]]; }
+                catch(...) { [self record:@"FAIL unknown C++ exception"]; }
+            } @catch(NSException* exception) {
+                [self record:[NSString stringWithFormat:@"FAIL Objective-C exception: %@: %@",exception.name,exception.reason]];
+            } @finally {
+                [self record:[@"END " stringByAppendingString:name]];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    self.busy = NO;
+                    for(UIButton* b in self.testButtons) b.enabled = YES;
+                });
+            }
         }
-    }).detach();
+    });
 }
 - (void)memoryTest {
     [self run:@"memory" block:^{
