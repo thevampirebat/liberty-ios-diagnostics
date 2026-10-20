@@ -32,7 +32,7 @@ void Submit(const rex::ui::vulkan::VulkanDevice& device) {
   VkCommandPool pool{};VkFence fence{};
   struct Cleanup {
     const rex::ui::vulkan::VulkanDevice& d;VkCommandPool& p;VkFence& f;
-    ~Cleanup(){auto q=d.AcquireQueue(d.queue_family_graphics_compute(),0);d.functions().vkQueueWaitIdle(q.queue());if(f)d.functions().vkDestroyFence(d.device(),f,nullptr);if(p)d.functions().vkDestroyCommandPool(d.device(),p,nullptr);}
+    ~Cleanup(){auto q=d.AcquireQueue(d.queue_family_graphics_compute(),0);d.functions().vkDeviceWaitIdle(d.device());if(f)d.functions().vkDestroyFence(d.device(),f,nullptr);if(p)d.functions().vkDestroyCommandPool(d.device(),p,nullptr);}
   }cleanup{device,pool,fence};
   VkCommandPoolCreateInfo pc{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};pc.queueFamilyIndex=device.queue_family_graphics_compute();
   Require(fn.vkCreateCommandPool(vkDevice,&pc,nullptr,&pool),"runtime command pool");
